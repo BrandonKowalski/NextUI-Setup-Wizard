@@ -10,7 +10,7 @@
 @inject HttpClient Http
 
 <div class="rom-container">
-    <h3>ROM Configuration</h3>
+    <h3 data-ref="page-header">ROM Configuration</h3>
     <p class="intro-text">Please select ROM files for each gaming system. You can select multiple files at once for each system.</p>
 
     @if (!string.IsNullOrEmpty(extractedPath))
@@ -148,7 +148,7 @@
 
     @if (isCopying)
     {
-        <div class="copy-progress">
+        <div data-ref="progress-container" class="copy-progress">
             <div class="progress-bar">
                 <div class="progress-fill" style="width: @(copyPercentage)%"></div>
             </div>
@@ -648,7 +648,7 @@
 
     private List<RomSystem> romSystems = new();
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
         // Get the extracted path from route parameter or query string
         if (!string.IsNullOrEmpty(ExtractedPath))
@@ -672,7 +672,18 @@
         }
 
         InitializeRomSystems();
+        return Task.CompletedTask;
     }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Scroll to page header when page first loads
+            await JSRuntime.InvokeVoidAsync("eval", "document.querySelector('[data-ref=\"page-header\"]').scrollIntoView({behavior: 'auto', block: 'start'});");
+        }
+    }
+
 
     private void InitializeRomSystems()
     {
@@ -779,14 +790,21 @@
                     var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
                     if (extension == ".zip")
                     {
-                        var zip = ZipFile.OpenRead(file.FullPath);
-                        if (system.SupportedFormats.Where(format => format != ".zip").Any(format => zip.Entries.Any(entry => entry.Name.ToLowerInvariant().EndsWith(format))))
+                        if (system.SupportedFormats.Count == 1 && system.SupportedFormats[0] == ".zip")
                         {
                             validFiles.Add(file);
                         }
                         else
                         {
-                            invalidFiles.Add(file.FileName);
+                            var zip = ZipFile.OpenRead(file.FullPath);
+                            if (system.SupportedFormats.Where(format => format != ".zip").Any(format => zip.Entries.Any(entry => entry.Name.ToLowerInvariant().EndsWith(format))))
+                            {
+                                validFiles.Add(file);
+                            }
+                            else
+                            {
+                                invalidFiles.Add(file.FileName);
+                            }
                         }
                     }
                     else
@@ -880,6 +898,10 @@
             copyProgress = "Copying...";
             copyStatus = "Preparing to copy ROM files...";
             StateHasChanged();
+            
+            // Auto-scroll to progress bar
+            await Task.Delay(50); // Allow DOM to render
+            await JSRuntime.InvokeVoidAsync("eval", $"document.querySelector('[data-ref=\"progress-container\"]').scrollIntoView({{behavior: 'smooth', block: 'end'}});");
 
             for (int i = 0; i < allSelectedFiles.Count; i++)
             {
@@ -929,13 +951,14 @@
         }
     }
 
-    private async Task SkipRomSetup()
+    private Task SkipRomSetup()
     {
         statusMessage = "ROM setup skipped. You can add ROM files later by copying them to the appropriate system directories.";
         isSuccess = true;
         StateHasChanged();
 
         Navigation.NavigateTo("/setup-complete");
+        return Task.CompletedTask;
     }
 
     private void ToggleSnesSystemCode(RomSystem system)

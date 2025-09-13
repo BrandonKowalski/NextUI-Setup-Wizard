@@ -1,0 +1,84 @@
+@using NextUI_Setup_Wizard.Resources
+@using System.Runtime.InteropServices
+
+<div class="version-container">
+    <button class="log-button" @onclick="OpenLogDirectory" title="@FileSystem.CacheDirectory">log</button>
+    <div class="version-display">
+        @VersionInfo.VersionString
+    </div>
+</div>
+
+@code {
+    private async Task OpenLogDirectory()
+    {
+        var logPath = FileSystem.CacheDirectory;
+
+        try
+        {
+            try
+            {
+                bool didOpen = await Launcher.OpenAsync(new Uri($"file://{logPath}"));
+                if(!didOpen)
+                    await Launcher.OpenAsync(logPath);
+            }
+            catch
+            {
+            }
+        }
+        catch
+        {
+        }
+    }
+}
+
+<style>
+    .version-container {
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        z-index: 1000;
+    }
+    
+    .version-display {
+        font-family: 'Courier New', Consolas, monospace;
+        font-size: 12px;
+        color: #666;
+        background-color: rgba(255, 255, 255, 0.8);
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        backdrop-filter: blur(2px);
+    }
+    
+    .version-display:hover {
+        color: #333;
+        background-color: rgba(255, 255, 255, 0.95);
+    }
+    
+    .log-button {
+        font-family: 'Courier New', Consolas, monospace;
+        font-size: 12px;
+        color: #666;
+        background-color: rgba(255, 255, 255, 0.8);
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        backdrop-filter: blur(2px);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .log-button:hover {
+        color: #333;
+        background-color: rgba(255, 255, 255, 0.95);
+        border-color: #999;
+    }
+    
+    .log-button:active {
+        background-color: rgba(240, 240, 240, 0.95);
+        transform: translateY(1px);
+    }
+</style>

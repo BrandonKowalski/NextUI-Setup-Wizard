@@ -5,11 +5,13 @@
 @using System.IO.Compression
 @using System.Security.Cryptography
 @using CommunityToolkit.Maui.Storage
+@using NextUI_Setup_Wizard.Resources
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
 
 <div class="release-container">
-    <h3>Latest NextUI Release</h3>
+    <h3 data-ref="page-header">Latest NextUI Release</h3>
 
     @if (!string.IsNullOrEmpty(SelectedPath))
     {
@@ -36,7 +38,10 @@
         <div class="release-info">
             <div class="release-header">
                 <h4>@latestRelease.Name</h4>
-                <span class="tag-name">@latestRelease.TagName</span>
+                @if (!string.IsNullOrEmpty(latestRelease.TagName) && !latestRelease.TagName.Equals(latestRelease.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    <span class="tag-name">Tag: @latestRelease.TagName</span>
+                }
                 @if (latestRelease.IsPrerelease)
                 {
                     <span class="prerelease-badge">Pre-release</span>
@@ -44,7 +49,10 @@
             </div>
             
             <div class="release-meta">
-                <p><strong>Author:</strong> @latestRelease.Author</p>
+                @if (!string.IsNullOrEmpty(latestRelease.Author))
+                {
+                    <p><strong>Author:</strong> @latestRelease.Author</p>
+                }
                 <p><strong>Published:</strong> @latestRelease.PublishedDate</p>
             </div>
             
@@ -123,7 +131,7 @@
             
             @if (isDownloading)
             {
-                <div class="download-progress">
+                <div data-ref="progress-container" class="download-progress">
                     <div class="progress-bar">
                         <div class="progress-fill" style="width: @(downloadPercentage)%"></div>
                     </div>
@@ -466,6 +474,16 @@
         await LoadReleaseInfo();
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Scroll to page header when page first loads
+            await JSRuntime.InvokeVoidAsync("eval", "document.querySelector('[data-ref=\"page-header\"]').scrollIntoView({behavior: 'auto', block: 'start'});");
+        }
+    }
+
+
     private async Task LoadReleaseInfo()
     {
         isLoading = true;
@@ -715,9 +733,13 @@
             downloadProgress = "Preparing...";
             downloadStatus = "Selecting download directory...";
             StateHasChanged();
+            
+            // Auto-scroll to progress bar
+            await Task.Delay(50); // Allow DOM to render
+            await JSRuntime.InvokeVoidAsync("eval", $"document.querySelector('[data-ref=\"progress-container\"]').scrollIntoView({{behavior: 'smooth', block: 'end'}});");
 
 
-            string extractPath = null;
+            string? extractPath = null;
 
             if (!string.IsNullOrEmpty(selectedPath))
             {
@@ -844,6 +866,31 @@
 
             // Extract zip file directly to the specified directory
             ZipFile.ExtractToDirectory(tempFilePath, extractPath, true);
+            
+            // Verify extraction
+            downloadProgress = "Verifying...";
+            downloadStatus = "Verifying extraction...";
+            downloadPercentage = 85;
+            StateHasChanged();
+            await Task.Delay(500);
+            
+            var extractionValid = VerifyExtraction(tempFilePath, extractPath);
+            if (!extractionValid)
+            {
+                // Cleanup on failed verification
+                File.Delete(tempFilePath);
+                try
+                {
+                    Directory.Delete(extractPath, true);
+                }
+                catch { /* Ignore cleanup errors */ }
+                
+                isDownloading = false;
+                downloadMessage = "Extraction verification failed! The extracted files do not match the zip contents.";
+                downloadSuccess = false;
+                StateHasChanged();
+                return;
+            }
         
             // Cleanup temp file
             File.Delete(tempFilePath);
@@ -851,8 +898,8 @@
             // Success
             downloadPercentage = 100;
             downloadProgress = "Complete!";
-            downloadStatus = "Download and extraction completed successfully";
-            downloadMessage = $"NextUI {latestRelease.TagName} has been successfully downloaded and extracted to: {extractPath}";
+            downloadStatus = "Download, extraction and verification completed successfully";
+            downloadMessage = $"NextUI {latestRelease?.TagName ?? "release"} has been successfully downloaded, extracted and verified to: {extractPath}";
             downloadSuccess = true;
 
             StateHasChanged();
@@ -932,7 +979,7 @@
             var filteredEntries = entries.Where(entry =>
             {
                 var fileName = Path.GetFileName(entry);
-                return !IsSystemFile(fileName);
+                return !FileSystemHelper.IsSystemFile(fileName);
             });
             
             return !filteredEntries.Any();
@@ -944,25 +991,79 @@
         }
     }
     
-    private bool IsSystemFile(string fileName)
+    private List<string> GetRootZipEntries(string zipFilePath)
     {
-        if (string.IsNullOrEmpty(fileName))
-            return false;
-            
-        // Common system files to ignore
-        var systemFiles = new[]
-        {
-            "System Volume Information",    // Windows
-            "WPSettings.dat",   // Windows
-            ".DS_Store",      // macOS
-            "Thumbs.db",      // Windows
-            "desktop.ini",    // Windows
-            "._.DS_Store",    // macOS resource fork
-            "__MACOSX"        // macOS archive metadata
-        };
+        var rootEntries = new List<string>();
         
-        return systemFiles.Any(sf => fileName.Equals(sf, StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            using var archive = ZipFile.OpenRead(zipFilePath);
+            foreach (var entry in archive.Entries)
+            {
+                // Handle both files and directories (including empty directories)
+                var entryPath = entry.FullName.Replace('\\', '/');
+                if (!string.IsNullOrEmpty(entryPath))
+                {
+                    // Get the top-level directory or file name
+                    var rootPart = entryPath.Split('/')[0];
+                    
+                    if (!string.IsNullOrEmpty(rootPart) && !rootEntries.Contains(rootPart, StringComparer.OrdinalIgnoreCase))
+                    {
+                        rootEntries.Add(rootPart);
+                    }
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Return empty list if zip cannot be read
+            return new List<string>();
+        }
+        
+        return rootEntries;
     }
+    
+    private bool VerifyExtraction(string zipFilePath, string extractPath)
+    {
+        try
+        {
+            var zipRootEntries = GetRootZipEntries(zipFilePath);
+            if (!zipRootEntries.Any())
+            {
+                return false; // Cannot verify if zip has no readable entries
+            }
+            
+            var extractedEntries = Directory.GetFileSystemEntries(extractPath)
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrEmpty(name) && !FileSystemHelper.IsSystemFile(name))
+                .ToList();
+            
+            // Check that all zip root entries exist in extracted directory
+            foreach (var zipEntry in zipRootEntries)
+            {
+                if (!extractedEntries.Contains(zipEntry, StringComparer.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            
+            // Check that no unexpected files were extracted (only root level)
+            foreach (var extractedEntry in extractedEntries)
+            {
+                if (!zipRootEntries.Contains(extractedEntry, StringComparer.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+    
     
     private string FormatReleaseNotes(string body)
     {

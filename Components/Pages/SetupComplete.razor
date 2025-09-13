@@ -3,7 +3,7 @@
 @inject NavigationManager Navigation
 
 <div class="completion-container">
-    <div class="completion-card">
+    <div class="completion-card" data-ref="page-header">
         <div class="success-header">
             <div class="success-icon">✓</div>
             <h2>Setup Complete!</h2>
@@ -52,6 +52,13 @@
             <div class="congratulations-section">
                 <p class="enjoy-message">
                     <strong>Enjoy your games!</strong>
+                </p>
+            </div>
+
+            <div class="docs-section">
+                <p class="docs-message">
+                    For more information on further customizing NextUI, please refer to the 
+                    <a href="https://nextui.loveretro.games/docs/" target="_blank" class="docs-link">official docs</a>.
                 </p>
             </div>
         </div>
@@ -144,6 +151,28 @@
         font-size: 1.3em;
         color: #28a745;
         margin: 0;
+    }
+
+    .docs-section {
+        text-align: center;
+        margin-top: 20px;
+    }
+
+    .docs-message {
+        font-size: 1em;
+        color: #495057;
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    .docs-link {
+        color: #0366d6;
+        text-decoration: none;
+        font-weight: 500;
+    }
+
+    .docs-link:hover {
+        text-decoration: underline;
     }
 
     .instructions-section {
@@ -333,6 +362,15 @@
 </style>
 
 @code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Scroll to page header when page first loads
+            await JSRuntime.InvokeVoidAsync("eval", "document.querySelector('[data-ref=\"page-header\"]').scrollIntoView({behavior: 'auto', block: 'start'});");
+        }
+    }
+
     private async Task FinishSetup()
     {
         try

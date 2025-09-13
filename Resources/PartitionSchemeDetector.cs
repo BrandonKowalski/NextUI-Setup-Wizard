@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -10,6 +11,7 @@ namespace NextUI_Setup_Wizard.Resources
 {
     public static class PartitionSchemeDetector
     {
+
         public enum PartitionScheme
         {
             Unknown,
@@ -35,22 +37,13 @@ namespace NextUI_Setup_Wizard.Resources
         /// </summary>
         public static async Task<PartitionInfo> DetectPartitionScheme(string drivePath)
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                return await DetectWindowsPartitionScheme(drivePath);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                return await DetectMacOSPartitionScheme(drivePath);
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                return await DetectLinuxPartitionScheme(drivePath);
-            }
-            else
-            {
-                return new PartitionInfo { ErrorMessage = "Unsupported platform" };
-            }
+#if WINDOWS
+            return await DetectWindowsPartitionScheme(drivePath);
+#elif MACCATALYST
+            return await DetectMacOSPartitionScheme(drivePath);
+#else
+            return new PartitionInfo { ErrorMessage = "Unsupported platform" };
+#endif
         }
 
         // ==========================================
@@ -85,7 +78,7 @@ namespace NextUI_Setup_Wizard.Resources
             }
             catch (Exception ex)
             {
-                info.ErrorMessage = $"Windows detection failed: {ex.Message}";
+                info.ErrorMessage = $"Windows detection failed: {ex}";
                 return info;
             }
         }
@@ -136,14 +129,14 @@ namespace NextUI_Setup_Wizard.Resources
             {
                 var psScript = $@"
     try {{
-        # Get logical disk
+# Get logical disk
         $logicalDisk = Get-WmiObject -Class Win32_LogicalDisk -Filter ""DeviceID='{driveLetter}:'"" -ErrorAction SilentlyContinue
         if ($logicalDisk) {{
             Write-Output ""DriveType: $($logicalDisk.DriveType)""
             Write-Output ""FileSystem: $($logicalDisk.FileSystem)""
             Write-Output ""Size: $($logicalDisk.Size)""
         
-            # Get physical disk through partition
+# Get physical disk through partition
             $partition = Get-WmiObject -Class Win32_LogicalDiskToPartition | Where-Object {{ $_.Dependent -match '{driveLetter}:' }}
             if ($partition) {{
                 $diskPartition = Get-WmiObject -Class Win32_DiskPartition | Where-Object {{ $_.DeviceID -eq $partition.Antecedent.Split('""')[1] }}
@@ -156,7 +149,7 @@ namespace NextUI_Setup_Wizard.Resources
                             Write-Output ""MediaType: $($physicalDisk.MediaType)""
                             Write-Output ""InterfaceType: $($physicalDisk.InterfaceType)""
                         
-                            # Try to determine partition style from partition type
+# Try to determine partition style from partition type
                             if ($diskPartition.Type -eq 'GPT: Basic data partition') {{
                                 Write-Output ""PartitionStyle: GPT""
                             }} elseif ($diskPartition.Type -like '*EFI*') {{
@@ -232,59 +225,194 @@ namespace NextUI_Setup_Wizard.Resources
 
             try
             {
-                // Method 1: diskutil info (most reliable)
-                var diskutilResult = await TryDiskutil(volumePath);
-                if (diskutilResult.Scheme != PartitionScheme.Unknown)
-                {
-                    return diskutilResult;
-                }
+                Logger.LogImmediate("DetectMacOSPartitionScheme");
 
-                // Method 2: df + system_profiler
-                var alternativeResult = await TryMacOSAlternative(volumePath);
-                return alternativeResult;
+                var result = await DiskUtilMac.DetectDiskInfo(volumePath);
+
+                info.Scheme = result.PartitionScheme == "MBR" ? PartitionScheme.MBR 
+                    : result.PartitionScheme == "GPT" ? PartitionScheme.GPT
+                    : result.PartitionScheme == "APM" ? PartitionScheme.APM
+                    : PartitionScheme.Unknown;
+                info.FileSystem = result.FileSystem;
+                info.ErrorMessage= result.ErrorMessage;
+                info.Details= result.Details;
+                info.SizeBytes = result.SizeBytes;
+                info.IsRemovable = result.IsRemovable;
+
+                return info;
             }
             catch (Exception ex)
             {
-                info.ErrorMessage = $"macOS detection failed: {ex.Message}";
+                info.ErrorMessage = $"macOS detection failed: {ex}";
                 return info;
             }
         }
 
-        private static async Task<PartitionInfo> TryDiskutil(string volumePath)
+        private static async Task<PartitionInfo> TryDiskutil(string volumePath, string? testVolumeInfo = null, string? testDiskInfo = null)
         {
+            Logger.LogImmediate($"TryDiskutil started for volume path: {volumePath}");
+
+            using var logger = new Logger();
+
             var info = new PartitionInfo();
 
             try
             {
-                // Get volume info
-                var volumeInfo = await RunCommand("/usr/sbin/diskutil", $"info \"{volumePath}\"");
+                logger.Log("Getting volume info using diskutil command");
+                // Get volume info using diskutil info (equivalent to diskutil info "$VOLUME")
+                var volumeInfo = testVolumeInfo ?? await RunCommand("/usr/sbin/diskutil", $"info \"{volumePath}\"");
                 if (!string.IsNullOrEmpty(volumeInfo))
                 {
+                    logger.Log("Volume info retrieved successfully, parsing data");
+                    // Parse volume info and extract disk identifier
                     ParseDiskutilVolumeInfo(volumeInfo, info);
-                }
-
-                // Get parent disk info for partition scheme
-                if (!string.IsNullOrEmpty(info.Details))
-                {
-                    var bsdNameMatch = Regex.Match(info.Details, @"Device Identifier:\s*(\w+)");
-                    if (bsdNameMatch.Success)
+                    
+                    // Extract disk part (e.g., disk2s1) from "Part of Whole" field
+                    var diskPartMatch = Regex.Match(volumeInfo, @"Part of Whole:\s*(\w+)");
+                    if (diskPartMatch.Success)
                     {
-                        var bsdName = bsdNameMatch.Groups[1].Value;
-                        var diskName = Regex.Replace(bsdName, @"s\d+$", ""); // Remove partition number
-
-                        var diskInfo = await RunCommand("/usr/sbin/diskutil", $"info {diskName}");
-                        if (!string.IsNullOrEmpty(diskInfo))
+                        var diskPart = diskPartMatch.Groups[1].Value; // e.g., disk2s1
+                        logger.Log($"Extracted disk part: {diskPart}");
+                        
+                        // Extract just the disk number (e.g., disk2 from disk2s1)
+                        var diskMatch = Regex.Match(diskPart, @"^(disk\d+)");
+                        if (diskMatch.Success)
                         {
-                            ParseDiskutilDiskInfo(diskInfo, info);
+                            var disk = diskMatch.Groups[1].Value; // e.g., disk2
+                            logger.Log($"Extracted disk identifier: {disk}");
+                            
+                            // Get partition type - look for "Type (Bundle)" first, then "File System Personality"
+                            var partitionType = "";
+                            var typeBundleMatch = Regex.Match(volumeInfo, @"Type \(Bundle\):\s*(.+)");
+                            if (typeBundleMatch.Success)
+                            {
+                                partitionType = typeBundleMatch.Groups[1].Value.Trim();
+                                logger.Log($"Found Type (Bundle): {partitionType}");
+                            }
+                            else
+                            {
+                                logger.Log("Type (Bundle) not found, trying File System Personality");
+                                var fsPersonalityMatch = Regex.Match(volumeInfo, @"File System Personality:\s*(.+)");
+                                if (fsPersonalityMatch.Success)
+                                {
+                                    partitionType = fsPersonalityMatch.Groups[1].Value.Trim();
+                                    logger.Log($"Found File System Personality: {partitionType}");
+                                }
+                                else
+                                {
+                                    logger.Log("No partition type found in either field");
+                                }
+                            }
+                            
+                            // Validate partition type (FAT32 = "msdos" or contains "fat32", exFAT = "exfat" or contains "exfat")
+                            var isFAT32 = partitionType.Equals("msdos", StringComparison.OrdinalIgnoreCase) || 
+                                         partitionType.Contains("fat32", StringComparison.OrdinalIgnoreCase);
+                            var isExFAT = partitionType.Contains("exfat", StringComparison.OrdinalIgnoreCase);
+                            var isValidFileSystem = isFAT32 || isExFAT;
+                            logger.Log($"File system validation - isFAT32: {isFAT32}, isExFAT: {isExFAT}, isValid: {isValidFileSystem}");
+                            
+                            if (isValidFileSystem)
+                            {
+                                info.FileSystem = isFAT32 ? "FAT32" : "exFAT";
+                                logger.Log($"Set file system to: {info.FileSystem}");
+                            }
+                            
+                            logger.Log($"Getting disk info for: /dev/{disk}");
+                            // Get partition scheme from the whole disk (equivalent to diskutil info "/dev/$DISK")
+                            var diskInfo = testDiskInfo ?? await RunCommand("/usr/sbin/diskutil", $"info /dev/{disk}");
+                            if (!string.IsNullOrEmpty(diskInfo))
+                            {
+                                logger.Log("Disk info retrieved, parsing partition scheme");
+                                // Look for "Content (IOContent)" field for partition scheme
+                                var schemeMatch = Regex.Match(diskInfo, @"Content \(IOContent\):\s*(.+)");
+                                if (schemeMatch.Success)
+                                {
+                                    var scheme = schemeMatch.Groups[1].Value.Trim();
+                                    logger.Log($"Found partition scheme: {scheme}");
+                                    
+                                    // Validate scheme (MBR = "FDisk_partition_scheme")
+                                    if (scheme.Equals("FDisk_partition_scheme", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        info.Scheme = PartitionScheme.MBR;
+                                        logger.Log("Identified as MBR partition scheme");
+                                    }
+                                    else if (scheme.Contains("GUID_partition_scheme"))
+                                    {
+                                        info.Scheme = PartitionScheme.GPT;
+                                        logger.Log("Identified as GPT partition scheme");
+                                    }
+                                    else if (scheme.Contains("Apple_partition_scheme"))
+                                    {
+                                        info.Scheme = PartitionScheme.APM;
+                                        logger.Log("Identified as APM partition scheme");
+                                    }
+                                    else
+                                    {
+                                        logger.Log($"Unknown partition scheme: {scheme}");
+                                    }
+                                }
+                                else
+                                {
+                                    logger.Log("No Content (IOContent) field found in disk info");
+                                }
+                                
+                                // Extract model information
+                                var modelMatch = Regex.Match(diskInfo, @"Device / Media Name:\s*(.+)");
+                                if (modelMatch.Success)
+                                {
+                                    info.Model = modelMatch.Groups[1].Value.Trim();
+                                    logger.Log($"Extracted model: {info.Model}");
+                                }
+                            }
+                            else
+                            {
+                                logger.Log("Failed to retrieve disk info");
+                            }
+                            
+                            // Set validation result based on both file system and partition scheme
+                            info.Details = $"Disk: {disk}, Partition Type: {partitionType}, Scheme: {info.Scheme}";
+                            logger.Log($"Validation details: {info.Details}");
+                            
+                            // Mark as valid if both file system and scheme are correct
+                            if (isValidFileSystem && info.Scheme == PartitionScheme.MBR)
+                            {
+                                info.Details += " [VALID: SD card is properly formatted]";
+                                logger.Log("SD card validation PASSED - properly formatted");
+                            }
+                            else
+                            {
+                                var issues = new List<string>();
+                                if (!isValidFileSystem)
+                                    issues.Add($"Invalid file system: {partitionType} (expected: msdos for FAT32 or exfat for exFAT)");
+                                if (info.Scheme != PartitionScheme.MBR)
+                                    issues.Add($"Invalid partition scheme: {info.Scheme} (expected: MBR/FDisk_partition_scheme)");
+                                
+                                info.ErrorMessage = $"SD card validation failed: {string.Join(", ", issues)}";
+                                logger.Log($"SD card validation FAILED: {info.ErrorMessage}");
+                            }
+                        }
+                        else
+                        {
+                            logger.Log("Failed to extract disk number from disk part");
                         }
                     }
+                    else
+                    {
+                        logger.Log("Failed to find 'Part of Whole' field in volume info");
+                    }
+                }
+                else
+                {
+                    logger.Log("Failed to retrieve volume info or volume info was empty");
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore errors, try alternative method
+                info.ErrorMessage = $"diskutil command failed: {ex.Message}";
+                logger.Log($"Exception occurred: {ex.Message}");
             }
 
+            logger.Log($"TryDiskutil completed with result - FileSystem: {info.FileSystem}, Scheme: {info.Scheme}, Error: {info.ErrorMessage}");
             return info;
         }
 
@@ -641,6 +769,75 @@ namespace NextUI_Setup_Wizard.Resources
                         };
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Test method using real-world diskutil output data
+        /// </summary>
+        public static async Task TestRealWorldDiskutilAsync()
+        {
+            Console.WriteLine("Testing real-world diskutil output parsing...");
+
+            var testVolumeInfo = @"      Device Identifier:         disk6s1
+   Device Node:               /dev/disk6s1
+   Whole:                     No
+   Part of Whole:             disk6
+
+   Volume Name:               SETUPWIZ
+   Mounted:                   Yes
+   Mount Point:               /Volumes/SETUPWIZ
+
+   Partition Type:            Windows_NTFS
+   File System Personality:   ExFAT
+   Type (Bundle):             exfat
+   Name (User Visible):       ExFAT
+
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  USB
+   SMART Status:              Not Supported
+   Volume UUID:               E3E8A367-42AD-3283-A77E-5CF409ED1742
+   Partition Offset:          1048576 Bytes (2048 512-Byte-Device-Blocks)
+
+   Disk Size:                 62.5 GB (62533926912 Bytes) (exactly 122136576 512-Byte-Units)
+   Device Block Size:         512 Bytes
+
+   Volume Total Space:        62.5 GB (62530912256 Bytes) (exactly 122130688 512-Byte-Units)
+   Volume Used Space:         13.2 MB (13238272 Bytes) (exactly 25856 512-Byte-Units) (0.0%)
+   Volume Free Space:         62.5 GB (62517673984 Bytes) (exactly 122104832 512-Byte-Units) (100.0%)
+   Allocation Block Size:     512 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           External
+   Removable Media:           Removable
+   Media Removal:             Software-Activated
+
+   Solid State:               Info not available";
+
+            var testDiskInfo = @"Content (IOContent): FDisk_partition_scheme";
+
+            var result = await TryDiskutil("/Volumes/SETUPWIZ", testVolumeInfo, testDiskInfo);
+
+            Console.WriteLine($"Result:");
+            Console.WriteLine($"  File System: {result.FileSystem}");
+            Console.WriteLine($"  Scheme: {result.Scheme}");
+            Console.WriteLine($"  Error: {result.ErrorMessage}");
+            Console.WriteLine($"  Details: {result.Details}");
+
+            var isValid = result.FileSystem == "exFAT" && result.Scheme == PartitionScheme.MBR && string.IsNullOrEmpty(result.ErrorMessage);
+            Console.WriteLine($"  Valid SD Card: {isValid}");
+
+            if (isValid)
+            {
+                Console.WriteLine("  ✅ Test PASSED - SD card is properly formatted (exFAT + MBR)");
+            }
+            else
+            {
+                Console.WriteLine("  ❌ Test FAILED");
             }
         }
     }

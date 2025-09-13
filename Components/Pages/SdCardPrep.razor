@@ -1,6 +1,7 @@
 ﻿@page "/sd-card-prep"
 @using System.IO
 @using System.IO.Compression
+@using System.Runtime.InteropServices
 @using CommunityToolkit.Maui.Storage
 @using NextUI_Setup_Wizard.Resources
 @inject NavigationManager Navigation
@@ -14,7 +15,7 @@
 </div>
 
 <div class="sd-card-container">
-    <h3>SD Card Preparation</h3>
+    <h3 data-ref="page-header">SD Card Preparation</h3>
 
     @if (currentStep == Step.Instructions)
     {
@@ -40,57 +41,54 @@
                 </div>
 
                 <div class="platform-instructions">
-                    <div class="platform-section">
-                        <h5>🍎 macOS Users</h5>
-                        <div class="instruction-steps">
-                            <ol>
-                                <li>Open <strong>Disk Utility</strong> (Applications → Utilities → Disk Utility)</li>
-                                <li>Select your SD card from the sidebar</li>
-                                <li>Click <strong>Erase</strong></li>
-                                <li>Give it a name (e.g. NextUI)</li>
-                                <li>Choose format: <strong>MS-DOS (FAT)</strong> for FAT32 or <strong>ExFAT</strong></li>
-                                <li>Set Scheme to <strong>Master Boot Record</strong></li>
-                                <li>Click <strong>Erase</strong> to format</li>
-                            </ol>
+                    @if (Utils.CurrentOS == OSType.Mac)
+                    {
+                        <div class="platform-section">
+                            <h5>🍎 macOS Instructions</h5>
+                            <div class="instruction-steps">
+                                <ol>
+                                    <li>Open <strong>Disk Utility</strong> (Applications → Utilities → Disk Utility)</li>
+                                    <li>Select your SD card from the sidebar</li>
+                                    <li>Click <strong>Erase</strong></li>
+                                    <li>Give it a name (e.g. NextUI)</li>
+                                    <li>Choose format: <strong>MS-DOS (FAT)</strong> for FAT32 or <strong>ExFAT</strong></li>
+                                    <li>Set Scheme to <strong>Master Boot Record</strong></li>
+                                    <li>Click <strong>Erase</strong> to format</li>
+                                </ol>
+                            </div>
                         </div>
-                    </div>
-
-                    <div class="platform-section">
-                        <h5>🪟 Windows Users</h5>
-                        <div class="instruction-steps">
-                            @* <p><strong>Option 1: Using Rufus (Recommended)</strong></p> *@
-                            <ol>
-                                <li>Download <a href="https://rufus.ie/" target="_blank">Rufus</a> (free tool)</li>
-                                <li>Run Rufus</li>
-                                <li>Select your SD card from the <span class="option">Device</span> dropdown</li>
-                                <li>Set <span class="option">Boot selection</span> to <strong>Non bootable</strong></li>
-                                <li>Set <span class="option"> Partition scheme</span> to <strong>MBR</strong></li>
-                                <li>Set <span class="option"> File system</span> to <strong>FAT32</strong> or <strong>exFAT</strong></li>
-                                <li>Under <span class="option"> Volume Label</span>, choose a name (e.g. NextUI) </li>
-                                <li>Make sure <span class="option"> Create extended label and icon files is</span> <strong>not</strong> selected</li>
-                                <li>Click <strong>START</strong> to format</li>
-                            </ol>
-
-                          @*   <p><strong>Option 2: Using File Explorer</strong></p>
-                            <ol>
-                                <li>Open File Explorer and locate your SD card</li>
-                                <li>Right-click the SD card and select <strong>Format...</strong></li>
-                                <li>Choose <strong>FAT32</strong> or <strong>exFAT</strong> as file system</li>
-                                <li>Click <strong>Start</strong> to format</li>
-                            </ol> *@
+                    }
+                    else if (Utils.CurrentOS == OSType.Windows)
+                    {
+                        <div class="platform-section">
+                            <h5>🪟 Windows Instructions</h5>
+                            <div class="instruction-steps">
+                                <ol>
+                                    <li>Download <a href="https://rufus.ie/" target="_blank">Rufus</a> (free tool)</li>
+                                    <li>Run Rufus</li>
+                                    <li>Select your SD card from the <span class="option">Device</span> dropdown</li>
+                                    <li>Set <span class="option">Boot selection</span> to <strong>Non bootable</strong></li>
+                                    <li>Set <span class="option"> Partition scheme</span> to <strong>MBR</strong></li>
+                                    <li>Set <span class="option"> File system</span> to <strong>FAT32</strong> or <strong>exFAT</strong></li>
+                                    <li>Under <span class="option"> Volume Label</span>, choose a name (e.g. NextUI) </li>
+                                    <li>Click <strong>START</strong> to format</li>
+                                </ol>
+                            </div>
                         </div>
-                    </div>
-@* 
-                    <div class="platform-section">
-                        <h5>🐧 Linux Users</h5>
-                        <div class="instruction-steps">
-                            <ol>
-                                <li>Use your distribution's disk management tool (e.g., GParted, Disks)</li>
-                                <li>Or use command line: <code>sudo mkfs.fat -F32 /dev/sdX1</code> (replace X with your device)</li>
-                                <li>For exFAT: <code>sudo mkfs.exfat /dev/sdX1</code></li>
-                            </ol>
+                    }
+                    else
+                    {
+                        <div class="platform-section">
+                            <h5>⚠️ Unsupported Platform</h5>
+                            <div class="instruction-steps">
+                                <p>Your operating system is not currently supported. Please format your SD card using your system's disk management tools with the following requirements:</p>
+                                <ul>
+                                    <li>File system: FAT32 or exFAT</li>
+                                    <li>Partition scheme: Master Boot Record (MBR)</li>
+                                </ul>
+                            </div>
                         </div>
-                    </div> *@
+                    }
                 </div>
 
                 <div class="format-requirements">
@@ -153,7 +151,7 @@
                     
                     @if (isWiping)
                     {
-                        <div class="wipe-progress">
+                        <div data-ref="progress-container" class="wipe-progress">
                             <div class="progress-bar">
                                 <div class="progress-fill" style="width: @(wipePercentage)%"></div>
                             </div>
@@ -702,6 +700,9 @@
 
             // Add fade-out class to trigger transition
             await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('splashOverlay').classList.add('fade-out')");
+
+            // Scroll to page header when page first loads
+            await JSRuntime.InvokeVoidAsync("eval", "document.querySelector('[data-ref=\"page-header\"]').scrollIntoView({behavior: 'auto', block: 'start'});");
         }
     }
 
@@ -767,12 +768,14 @@
             var drives = DriveInfo.GetDrives();
             DriveInfo? targetDrive = null;
 
-            // Find the drive that contains this path
+            // Find the drive that exactly matches this path's root
             foreach (var drive in drives)
             {
                 try
                 {
-                    if (path.StartsWith(drive.RootDirectory.FullName, StringComparison.OrdinalIgnoreCase))
+                    var rootPath = drive.RootDirectory.FullName;
+                    if (string.Equals(path, rootPath, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, rootPath, StringComparison.OrdinalIgnoreCase))
                     {
                         targetDrive = drive;
                         break;
@@ -811,11 +814,39 @@
                 return;
             }
 
-            // Get file system information
-            fileSystem = targetDrive.DriveFormat.ToUpperInvariant();
+            // Get file system information using PartitionSchemeDetector for better cross-platform support
+            var partitionInfo = await PartitionSchemeDetector.DetectPartitionScheme(path);
+
+            using var logger = new Logger();
+
+            if (!string.IsNullOrEmpty(partitionInfo.ErrorMessage) || string.IsNullOrEmpty(partitionInfo.FileSystem))
+            {
+                // Fallback to DriveInfo if PartitionSchemeDetector fails
+                fileSystem = targetDrive.DriveFormat.ToUpperInvariant();
+                logger.Log($"Fallback to DriveInfo from PartitionSchemeDetector failure({partitionInfo.ErrorMessage}), fileSystem: {fileSystem}");
+            }
+            else
+            {
+                // Use PartitionSchemeDetector result and normalize the file system name
+                var detectedFS = partitionInfo.FileSystem.ToUpperInvariant();
+
+                // Map macOS diskutil output to standard names
+                if (detectedFS.Contains("FAT32"))
+                {
+                    fileSystem = "FAT32";
+                }
+                else if (detectedFS.Contains("EXFAT"))
+                {
+                    fileSystem = "EXFAT";
+                }
+                else
+                {
+                    fileSystem = detectedFS;
+                }
+            }
 
             // Validate file system
-            if (fileSystem != "FAT32" && fileSystem != "EXFAT" && fileSystem != "FAT")
+            if (fileSystem != "FAT32" && fileSystem != "EXFAT")
             {
                 validationError = $"Invalid file system detected: {fileSystem}. Please format your SD card to FAT32 or exFAT and try again.";
                 isValidating = false;
@@ -852,8 +883,6 @@
                 StateHasChanged();
                 return;
             }
-
-            var partitionInfo = await PartitionSchemeDetector.DetectPartitionScheme(path);
 
             if (!string.IsNullOrEmpty(partitionInfo.ErrorMessage))
             {
@@ -944,6 +973,10 @@
             wipeProgress = "Preparing to wipe SD card...";
             wipePercentage = 0;
             StateHasChanged();
+            
+            // Auto-scroll to progress bar
+            await Task.Delay(50); // Allow DOM to render
+            await JSRuntime.InvokeVoidAsync("eval", $"document.querySelector('[data-ref=\"progress-container\"]').scrollIntoView({{behavior: 'smooth', block: 'end'}});");
 
             await WipeSDCard(selectedPath);
 
@@ -975,7 +1008,7 @@
                 .ToList();
 
             var rootEntries = Directory.GetFileSystemEntries(path)
-                .Where(entry => !IsSystemFile(Path.GetFileName(entry)))
+                .Where(entry => !FileSystemHelper.IsSystemFile(Path.GetFileName(entry)))
                 .ToList();
 
             wipeProgress = $"Found {allEntries.Count} items to delete...";
@@ -1053,7 +1086,7 @@
 
             // Verify the SD card is now empty (except system files)
             var remainingEntries = Directory.GetFileSystemEntries(path)
-                .Where(entry => !IsSystemFile(Path.GetFileName(entry)))
+                .Where(entry => !FileSystemHelper.IsSystemFile(Path.GetFileName(entry)))
                 .ToList();
 
             if (remainingEntries.Any())
@@ -1103,7 +1136,7 @@
             var filteredEntries = entries.Where(entry =>
             {
                 var fileName = Path.GetFileName(entry);
-                return !IsSystemFile(fileName);
+                return !FileSystemHelper.IsSystemFile(fileName);
             });
             
             return !filteredEntries.Any();
@@ -1115,25 +1148,6 @@
         }
     }
     
-    private bool IsSystemFile(string fileName)
-    {
-        if (string.IsNullOrEmpty(fileName))
-            return false;
-            
-        // Common system files to ignore
-        var systemFiles = new[]
-        {
-            "System Volume Information",    // Windows
-            "WPSettings.dat",   // Windows
-            ".DS_Store",      // macOS
-            "Thumbs.db",      // Windows
-            "desktop.ini",    // Windows
-            "._.DS_Store",    // macOS resource fork
-            "__MACOSX"        // macOS archive metadata
-        };
-        
-        return systemFiles.Any(sf => fileName.Equals(sf, StringComparison.OrdinalIgnoreCase));
-    }
     
     private async Task<bool> IsNextUIInstalled(string path)
     {
